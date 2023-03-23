@@ -579,7 +579,7 @@ static inline int cpp_ad_codegen_model_counter = 0;
 struct CodeGenSettings {
   bool verbose{true};
   bool use_clang{true};
-  int optimization_level{0};
+  int optimization_level{3};
   std::size_t max_assignments_per_func{5000};
   std::size_t max_operations_per_assignment{150};
   std::string sources_folder{"cppadcg_src"};
@@ -721,6 +721,7 @@ class GradientFunctional<DIFF_CPPAD_CODEGEN_AUTO, F, ScalarAlgebra> {
       printf("Tracing completed.\t(%.3fs)\n", timer.stop());
     }
     ay[0] = f(ax);
+    printf("contact south\n");
     CppAD::ADFun<CGScalar> tape;
     tape.Dependent(ax, ay);
     // tape.optimize();
@@ -751,27 +752,27 @@ class GradientFunctional<DIFF_CPPAD_CODEGEN_AUTO, F, ScalarAlgebra> {
       fflush(stdout);
     }
 
-    if (cgen.isCreateSparseJacobian()) {
-      // check that the sparse Jacobian indices match the requested indices
-      const auto &sparsity = cgen.getJacobianSparsity();
-      std::vector<size_t> missing_indices;
-      for (size_t i = 0; i < sparsity.sparsity.size(); ++i) {
-        if (sparsity.sparsity[i].empty()) {
-          missing_indices.push_back(i);
-        }
-      }
-      if (!missing_indices.empty()) {
-        // there are missing indices in the generated sparsity pattern
-        if (settings.fail_on_missing_gradient_indices) {
-          throw MissingGradientException(missing_indices, model_name);
-        } else {
-          std::cerr << "Warning: "
-                    << MissingGradientException::message(missing_indices,
-                                                         model_name)
-                    << std::endl;
-        }
-      }
-    }
+    // if (cgen.isCreateSparseJacobian()) {
+    //   // check that the sparse Jacobian indices match the requested indices
+    //   const auto &sparsity = cgen.getJacobianSparsity();
+    //   std::vector<size_t> missing_indices;
+    //   for (size_t i = 0; i < sparsity.sparsity.size(); ++i) {
+    //     if (sparsity.sparsity[i].empty()) {
+    //       missing_indices.push_back(i);
+    //     }
+    //   }
+    //   if (!missing_indices.empty()) {
+    //     // there are missing indices in the generated sparsity pattern
+    //     if (settings.fail_on_missing_gradient_indices) {
+    //       throw MissingGradientException(missing_indices, model_name);
+    //     } else {
+    //       std::cerr << "Warning: "
+    //                 << MissingGradientException::message(missing_indices,
+    //                                                      model_name)
+    //                 << std::endl;
+    //     }
+    //   }
+    // }
 
     cgen.setMaxAssignmentsPerFunc(settings.max_assignments_per_func);
     cgen.setMaxOperationsPerAssignment(settings.max_operations_per_assignment);

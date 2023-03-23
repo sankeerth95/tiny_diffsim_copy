@@ -416,6 +416,8 @@ IF(USE_TESTING)
     SUBDIRS(${CMAKE_CURRENT_LIST_DIR}/test)
 ENDIF()
 SUBDIRS(${CMAKE_CURRENT_LIST_DIR}/examples)
+SUBDIRS(${CMAKE_CURRENT_LIST_DIR}/myenv)
+SUBDIRS(${CMAKE_CURRENT_LIST_DIR}/e2e_sim)
 
 OPTION(BUILD_PYTHON_PLUGIN "Set when you want to build pydiffphys (Python bindings for tiny-differentiable-simulator)" ON)
 IF(BUILD_PYTHON_PLUGIN)
