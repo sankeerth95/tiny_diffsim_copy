@@ -1,5 +1,6 @@
 .clangd
 build/
+build_cmake/
 compile_commands.json
 Dockerfile
 .history

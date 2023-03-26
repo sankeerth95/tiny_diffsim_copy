@@ -39,9 +39,10 @@ auto init_visualize(){
     MeshcatUrdfVisualizer<Algebra> meshcat_viz;
     meshcat_viz.delete_all();
 
+    tds::World<Algebra> world;
+
     // render a plane
     {
-        tds::World<Algebra> world;
         tds::MultiBody<Algebra>& plane_mb = *world.create_multi_body();
         plane_mb.set_floating_base(false);
 
@@ -51,11 +52,48 @@ auto init_visualize(){
         tds::UrdfStructures<Algebra> plane_urdf_structures = parser.load_urdf(plane_file_name);
         tds::UrdfToMultiBody<Algebra>::convert_to_multi_body(plane_urdf_structures, world, plane_mb,0);
 
-        std::string texture_path = "checker_purple.png";
         char plane_search_path[TINY_MAX_EXE_PATH_LEN];
         tds::FileUtils::extract_path(plane_file_name.c_str(), plane_search_path, TINY_MAX_EXE_PATH_LEN);
         meshcat_viz.m_path_prefix = plane_search_path;
+
+        std::string texture_path = "checker_purple.png";
         meshcat_viz.convert_visuals(plane_urdf_structures, texture_path,&plane_mb);
+    }
+
+    // render an object
+    {
+        tds::MultiBody<Algebra>& obj_mb = *world.create_multi_body();
+        obj_mb.set_floating_base(true);
+
+        tds::UrdfParser<Algebra> parser;
+        std::string obj_file_name;
+        tds::FileUtils::find_file("laikago/laikago_toes_zup.urdf", obj_file_name);
+        tds::UrdfStructures<Algebra> obj_urdf_structures = parser.load_urdf(obj_file_name);
+        tds::UrdfToMultiBody<Algebra>::convert_to_multi_body(obj_urdf_structures, world, obj_mb, 0);
+
+        char obj_search_path[TINY_MAX_EXE_PATH_LEN];
+        tds::FileUtils::extract_path(obj_file_name.c_str(), obj_search_path, TINY_MAX_EXE_PATH_LEN);
+        meshcat_viz.m_path_prefix = obj_search_path;
+
+        obj_mb.initialize();
+        std::string texture_path = "laikago_tex.jpg";
+        meshcat_viz.convert_visuals(obj_urdf_structures, texture_path, &obj_mb);
+
+        using Vector3 = typename Algebra::Vector3;
+        using Quaternion = typename Algebra::Quaternion;
+
+        double knee_angle = -0.5;
+        double abduction_angle = 0.2;
+        std::vector<double> initial_poses = {
+            0., 0., 0., 1., 0, 0, 0, 1.5,
+            abduction_angle, 0., knee_angle, abduction_angle, 0., knee_angle,
+            abduction_angle, 0., knee_angle, abduction_angle, 0., knee_angle,
+        };
+        for (int i = 0; i < 19; i++) {
+            obj_mb.q_[i] = initial_poses[i];
+        }
+        obj_mb.set_position(Vector3(1.5, -2.0, 0.5));
+        obj_mb.set_orientation(Quaternion(0.0, 0.0, 0.0, 1.0));
     }
 
     return meshcat_viz;
