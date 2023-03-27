@@ -1,3 +1,8 @@
+add_executable(sample_ad sample_ad.cpp  ${TDS_HDRS})
+target_link_libraries(sample_ad differentiation Eigen3::Eigen ${CMAKE_DL_LIBS})
+target_include_directories(sample_ad PRIVATE ../src ./)# ../build_cmake/CppADCodeGen/include)
+target_compile_definitions(sample_ad PRIVATE USE_CPPAD USE_TINY USE_CPPAD_CODEGEN)
+
 
 add_executable(my_diffrew_sim my_diffrew_sim.cpp  ${TDS_HDRS})
 target_link_libraries(my_diffrew_sim differentiation Eigen3::Eigen ${CMAKE_DL_LIBS})

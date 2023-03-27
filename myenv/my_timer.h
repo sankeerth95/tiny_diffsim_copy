@@ -28,7 +28,8 @@ struct TimerHelper {
     static TimerVar end_time;
     static std::string name;
 public:
-    static void start_timer(std::string name){
+    static void start_timer(const std::string& name){
+        TimerHelper::name = name;
         start_time = std::chrono::high_resolution_clock::now();
     }
 

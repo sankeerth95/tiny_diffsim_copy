@@ -46,6 +46,7 @@ enum DiffMethod {
   DIFF_STAN_FORWARD,
   DIFF_CPPAD_AUTO,
   DIFF_CPPAD_CODEGEN_AUTO,
+  DIFF_CPPAD_CODEGEN_REV_AUTO,
 };
 
 /**
@@ -70,6 +71,8 @@ TINY_INLINE std::string diff_method_name(DiffMethod m) {
       return "CPPAD_AUTO";
     case DIFF_CPPAD_CODEGEN_AUTO:
       return "CPPAD_CODEGEN_AUTO";
+    case DIFF_CPPAD_CODEGEN_REV_AUTO:
+      return "CPPAD_CODEGEN_REV_AUTO";
     default:
       return "UNKNOWN";
   }
@@ -579,7 +582,7 @@ static inline int cpp_ad_codegen_model_counter = 0;
 struct CodeGenSettings {
   bool verbose{true};
   bool use_clang{true};
-  int optimization_level{3};
+  int optimization_level{0};
   std::size_t max_assignments_per_func{5000};
   std::size_t max_operations_per_assignment{150};
   std::string sources_folder{"cppadcg_src"};
@@ -730,6 +733,7 @@ class GradientFunctional<DIFF_CPPAD_CODEGEN_AUTO, F, ScalarAlgebra> {
     CppAD::cg::ModelCSourceGen<Scalar> cgen(tape, model_name);
     // cgen.setCreateSparseJacobian(true);
     cgen.setCreateJacobian(true);
+    cgen.setCreateReverseOne(false);
     if (settings.default_nograd_x.size() > 0) {
       if (settings.verbose) {
         printf(
@@ -831,6 +835,8 @@ class GradientFunctional<DIFF_CPPAD_CODEGEN_AUTO, F, ScalarAlgebra> {
 
   Scalar value(const std::vector<Scalar> &x) const {
     const auto fx = model_->ForwardZero(x);
+    // const auto fx = model_->ReverseOne(x);
+
 #ifndef NDEBUG
     // const auto fx_slow = f_scalar_(x);
     // const bool close = std::fabs(fx_slow - fx[0]) < 1e-6;
@@ -909,6 +915,258 @@ class GradientFunctional<DIFF_CPPAD_CODEGEN_AUTO, F, ScalarAlgebra> {
   std::unique_ptr<CppAD::cg::LinuxDynamicLib<Scalar>> lib_{nullptr};
   std::unique_ptr<CppAD::cg::GenericModel<Scalar>> model_;
 };
+
+
+
+template <template <typename> typename F, typename ScalarAlgebra>
+class GradientFunctional<DIFF_CPPAD_CODEGEN_REV_AUTO, F, ScalarAlgebra> {
+ public:
+  using Scalar = typename ScalarAlgebra::Scalar;
+  using CGScalar = typename CppAD::cg::CG<Scalar>;
+  using Dual = typename CppAD::AD<CGScalar>;
+  static const int kDim = F<ScalarAlgebra>::kDim;
+  using DualAlgebra = typename default_diff_algebra<DIFF_CPPAD_CODEGEN_REV_AUTO,
+                                                    kDim, Scalar>::type;
+  // #ifndef NDEBUG
+  // template <typename... Args>
+  // GradientFunctional(Args &&... args)
+  //     : model_name_("model_" + std::to_string(cpp_ad_codegen_model_counter)),
+  //       f_scalar_(std::forward<Args>(args)...) {
+  //   Init();
+  // }
+  // #else
+  // template <typename... Args>
+  // GradientFunctional(Args &&...)
+  //     : model_name_("model_" + std::to_string(cpp_ad_codegen_model_counter)) {
+  //   Init();
+  // }
+  // #endif
+  GradientFunctional(const std::string &model_name =
+                         "model_" +
+                         std::to_string(cpp_ad_codegen_model_counter),
+                     const std::string &library_name = "")
+      : model_name_(model_name), library_name_(library_name) {
+    Init();
+  }
+  GradientFunctional(const GradientFunctional &other)
+      : model_name_(other.model_name_), library_name_(other.library_name_) {
+    Init();
+  }
+  GradientFunctional &operator=(const GradientFunctional &other) {
+    model_name_ = other.model_name_;
+    library_name_ = other.library_name_;
+    Init();
+    return *this;
+  }
+
+  /**
+   * Generates and compiles code for the functor provided through the template
+   * argument. Returns the name of the model that can be provided to the
+   * subsequent GradientFunctor constructions to load this model from its
+   * dynamic library (dlopen). Further codegen- and compilation-related settings
+   * can be made via the `settings` argument.
+   * Any arguments provided via parameter packing are forwarded to the
+   * constructor of the functor `F` provided as template argument.
+   */
+  template <typename... Args>
+  static std::string Compile(
+      const CodeGenSettings &settings = CodeGenSettings(), Args &&... args) {
+    int actual_dim =
+        kDim > 0 ? kDim : static_cast<int>(settings.default_x.size());
+    if (actual_dim == 0) {
+      std::cerr << "Warning: CppADCodeGen GradientFunctional could not be "
+                   "initialized because the parameter dimensionality is zero."
+                << std::endl;
+      return "<ERROR>";
+    }
+    std::vector<Dual> ax(actual_dim + settings.default_nograd_x.size());
+    for (std::size_t i = 0; i < actual_dim; ++i) {
+      if (i >= settings.default_x.size()) {
+        ax[i] = ScalarAlgebra::zero();
+      } else {
+        ax[i] = settings.default_x[i];
+      }
+    }
+
+    for (std::size_t i = 0; i < settings.default_nograd_x.size(); ++i) {
+      ax[i + actual_dim] = settings.default_nograd_x[i];
+    }
+
+    std::string model_name;
+    if (!settings.model_name.empty()) {
+      model_name = settings.model_name;
+    } else {
+      model_name = "model_" + std::to_string(++cpp_ad_codegen_model_counter);
+    }
+    CppAD::Independent(ax);
+    std::vector<Dual> ay(1);
+    Stopwatch timer;
+    timer.start();
+    if (settings.verbose) {
+      printf("Tracing cost functor of model \"%s\" for code generation...\n",
+             model_name.c_str());
+    }
+    F<DualAlgebra> f(std::forward<Args>(args)...);
+    if (settings.verbose) {
+      printf("Tracing completed.\t(%.3fs)\n", timer.stop());
+    }
+    ay[0] = f(ax);
+    printf("contact south\n");
+    CppAD::ADFun<CGScalar> tape;
+    tape.Dependent(ax, ay);
+    // tape.optimize();
+
+    timer.start();
+    CppAD::cg::ModelCSourceGen<Scalar> cgen(tape, model_name);
+    // cgen.setCreateSparseJacobian(true);
+    cgen.setCreateJacobian(true);
+    cgen.setCreateReverseOne(false);
+    if (settings.default_nograd_x.size() > 0) {
+      if (settings.verbose) {
+        printf(
+            "Dynamic parameters provided, creating sparsity pattern. (%d "
+            "active, %ld inactive)\n",
+            actual_dim, ax.size() - actual_dim);
+      }
+      std::vector<size_t> rows(actual_dim, 0);
+      std::vector<size_t> cols(actual_dim, 0);
+      std::iota(cols.begin(), cols.end(), 0);
+      cgen.setCustomSparseJacobianElements(rows, cols);
+    }
+    if (settings.verbose) {
+      timer.start();
+      printf("Generating code for model \"%s\" with CppADCodeGen...\n",
+             model_name.c_str());
+      cgen.generateSources(CppAD::cg::MultiThreadingType::NONE);
+      printf("Code for model \"%s\" has been generated.\t(%.3fs)\n",
+             model_name.c_str(), timer.stop());
+      fflush(stdout);
+    }
+
+    // if (cgen.isCreateSparseJacobian()) {
+    //   // check that the sparse Jacobian indices match the requested indices
+    //   const auto &sparsity = cgen.getJacobianSparsity();
+    //   std::vector<size_t> missing_indices;
+    //   for (size_t i = 0; i < sparsity.sparsity.size(); ++i) {
+    //     if (sparsity.sparsity[i].empty()) {
+    //       missing_indices.push_back(i);
+    //     }
+    //   }
+    //   if (!missing_indices.empty()) {
+    //     // there are missing indices in the generated sparsity pattern
+    //     if (settings.fail_on_missing_gradient_indices) {
+    //       throw MissingGradientException(missing_indices, model_name);
+    //     } else {
+    //       std::cerr << "Warning: "
+    //                 << MissingGradientException::message(missing_indices,
+    //                                                      model_name)
+    //                 << std::endl;
+    //     }
+    //   }
+    // }
+
+    cgen.setMaxAssignmentsPerFunc(settings.max_assignments_per_func);
+    cgen.setMaxOperationsPerAssignment(settings.max_operations_per_assignment);
+    if (settings.verbose) {
+      timer.start();
+    }
+    CppAD::cg::ModelLibraryCSourceGen<Scalar> libcgen(cgen);
+    libcgen.setVerbose(settings.verbose);
+    if (settings.verbose) {
+      printf("Created CppAD::cg::ModelLibraryCSourceGen.\t(%.3fs)\n",
+             timer.stop());
+      fflush(stdout);
+      timer.start();
+    }
+    CppAD::cg::DynamicModelLibraryProcessor<Scalar> p(libcgen);
+    if (settings.verbose) {
+      printf("Created CppAD::cg::DynamicModelLibraryProcessor.\t(%.3fs)\n",
+             timer.stop());
+      fflush(stdout);
+      timer.start();
+    }
+    std::unique_ptr<CppAD::cg::AbstractCCompiler<Scalar>> compiler;
+    if (settings.use_clang) {
+      compiler = std::make_unique<CppAD::cg::ClangCompiler<Scalar>>();
+      printf("Created CppAD::cg::ClangCompiler.\t");
+    } else {
+      compiler = std::make_unique<CppAD::cg::GccCompiler<Scalar>>();
+      printf("Created CppAD::cg::GccCompiler.\t");
+    }
+    compiler->setSourcesFolder(settings.sources_folder);
+    compiler->setSaveToDiskFirst(settings.save_to_disk);
+    compiler->addCompileFlag("-O" +
+                             std::to_string(settings.optimization_level));
+    std::cout << "{ ";
+    for (const auto &flag : compiler->getCompileFlags()) {
+      std::cout << flag << " ";
+    }
+    std::cout << "}\t";
+    if (settings.verbose) {
+      printf("(%.3fs)\n", timer.stop());
+      fflush(stdout);
+      timer.start();
+    }
+
+    p.setLibraryName(model_name);
+    p.createDynamicLibrary(*compiler, false);
+    std::cout << "Created new dynamic library at " << p.getLibraryName()
+              << ".so.\n";
+    if (settings.verbose) {
+      printf("Finished compiling dynamic library.\t(%.3fs)\n", timer.stop());
+      fflush(stdout);
+    }
+
+    return model_name;
+  }
+
+  Scalar value(const std::vector<Scalar> &x) const {
+    const auto fx = model_->ForwardZero(x);
+    // const auto fx = model_->ReverseOne(x);
+    return fx[0];
+  }
+  const std::vector<Scalar> &gradient(const std::vector<Scalar> &x) const {
+    assert(lib_ != nullptr && model_ != nullptr);
+    static int actual_dim = kDim > 0 ? kDim : static_cast<int>(x.size());
+    assert(actual_dim > 0);
+    gradient_.resize(actual_dim);
+    rows_.resize(actual_dim);
+    cols_.resize(actual_dim);
+    // model_->SparseJacobian(x, gradient_, rows_, cols_);
+    gradient_ = model_->ReverseOne(x);
+
+    return gradient_;
+  }
+
+  void Init(bool verbose = false) {
+    if (library_name_.empty()) {
+      library_name_ = "./" + model_name_ + ".so";
+    }
+    lib_ = std::make_unique<CppAD::cg::LinuxDynamicLib<Scalar>>(library_name_);
+    model_ = lib_->model(model_name_);
+    if (verbose) {
+      std::cout << "Loaded compiled model \"" << model_name_ << "\" from \""
+                << library_name_ << "\".\n";
+    }
+  }
+
+ private:
+  // name of the model and library to load, uses latest compiled model by
+  // default
+  std::string model_name_{""};
+
+  // file name of the dynamic library to load
+  std::string library_name_{""};
+
+  mutable std::vector<Scalar> gradient_;
+  mutable std::vector<std::size_t> rows_;
+  mutable std::vector<std::size_t> cols_;
+  std::unique_ptr<CppAD::cg::LinuxDynamicLib<Scalar>> lib_{nullptr};
+  std::unique_ptr<CppAD::cg::GenericModel<Scalar>> model_;
+};
+
+
+
 #endif
 #endif
 }  // namespace tds

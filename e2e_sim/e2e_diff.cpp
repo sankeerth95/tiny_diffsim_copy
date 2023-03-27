@@ -14,13 +14,104 @@
 #include "pendulum_def.h"
 
 
-template<typename Algebra>
-struct Simulator{
-    using Scalar = typename Algebra::Scalar;
+typedef TinyAlgebra<double, ::TINY::DoubleUtils> MyAlgebra;
 
-    static const int kDim = 10;
+
+template<typename Algebra>
+struct LaikagoSimEnv{
+    using Scalar = typename Algebra::Scalar;
+    using Vector3 = typename Algebra::Vector3;
+    using Quaternion = typename Algebra::Quaternion;
+
+    tds::World<Algebra> world;
+    std::vector<tds::MultiBody<Algebra>*> mb;
+
+    // render a plane
+    tds::UrdfParser<Algebra> parser;
+    std::vector<tds::UrdfStructures<Algebra> > urdf_structures;
+    MeshcatUrdfVisualizer<Algebra> meshcat_viz;
+
+    // private
+    std::string plane_file_name;
+    std::string laikago_file_name;
+
+    LaikagoSimEnv(): mb(2), urdf_structures(2){
+
+        set_ground();
+        set_robot_instance();
+        meshcat_viz.delete_all();
+    }
+
+
+    void set_render_scene(){
+        set_render_ground();
+        set_render_robot_instance();
+    }
+
+    void update_render(){
+        meshcat_viz.render();
+
+        // meshcat_viz.sync_visual_transforms(mb[0]);
+        // meshcat_viz.sync_visual_transforms(mb[1]);
+    }
+
+
+    void set_robot_instance(){
+
+        mb[1] = world.create_multi_body();
+        mb[1]->set_floating_base(true);
+
+        std::string laikago_file_name;
+        tds::FileUtils::find_file("laikago/laikago.urdf", laikago_file_name);
+        urdf_structures[1] = parser.load_urdf(laikago_file_name);
+        tds::UrdfToMultiBody<Algebra>::convert_to_multi_body(urdf_structures[1], world, *mb[1], 0);
+
+        mb[1]->initialize();
+        double knee_angle = -0.5;
+        double abduction_angle = 0.2;
+        std::vector<double> initial_poses = {
+            0., 0., 0., 1., 0, 0, 0, 1.5,
+            abduction_angle, 0., knee_angle, abduction_angle, 0., knee_angle,
+            abduction_angle, 0., knee_angle, abduction_angle, 0., knee_angle,
+        };
+        for (int i = 0; i < 19; i++) {
+            mb[1]->q_[i] = initial_poses[i];
+        }
+        mb[1]->set_position(Vector3(1.5, -2.0, 0.5));
+        mb[1]->set_orientation(Quaternion(0.0, 0.0, 0.0, 1.0));
+
+    }
+
+    void set_ground(){
+        mb[0] = world.create_multi_body();
+        mb[0]->set_floating_base(false);
+        tds::FileUtils::find_file("plane_implicit.urdf", plane_file_name);
+        urdf_structures[0] = parser.load_urdf(plane_file_name);
+        tds::UrdfToMultiBody<Algebra>::convert_to_multi_body(urdf_structures[0], world, *mb[0],0);
+    }
+
+
+
+    void set_render_ground(){
+
+        char plane_search_path[TINY_MAX_EXE_PATH_LEN];
+        tds::FileUtils::extract_path(plane_file_name.c_str(), plane_search_path, TINY_MAX_EXE_PATH_LEN);
+        meshcat_viz.m_path_prefix = plane_search_path;
+        meshcat_viz.convert_visuals(urdf_structures[0], "checker_purple.png", mb[0]);
+    }
+
+
+    void set_render_robot_instance(){
+        char laikago_search_path[TINY_MAX_EXE_PATH_LEN];
+        tds::FileUtils::extract_path(laikago_file_name.c_str(), laikago_search_path, TINY_MAX_EXE_PATH_LEN);
+        meshcat_viz.m_path_prefix = laikago_search_path;
+        meshcat_viz.convert_visuals(urdf_structures[1], "laikago_tex.jpg", mb[1]);
+    }
+
+
+    static const int kDim = 0;
     Scalar operator()(const std::vector<Scalar>& v) const {
-        // . .. 
+        // 
         return v[0] + v[1];
     }
 };
@@ -30,127 +121,44 @@ struct Simulator{
 template<typename Algebra>
 auto prepare(){
     // return Simulator<Algebra>();
-    return Pendulum<Algebra>();
-
+    return LaikagoSimEnv<Algebra>();
 }
-
-template<typename Algebra>
-auto init_visualize(){
-    MeshcatUrdfVisualizer<Algebra> meshcat_viz;
-    meshcat_viz.delete_all();
-
-    tds::World<Algebra> world;
-
-    // render a plane
-    {
-        tds::MultiBody<Algebra>& plane_mb = *world.create_multi_body();
-        plane_mb.set_floating_base(false);
-
-        tds::UrdfParser<Algebra> parser;
-        std::string plane_file_name;
-        tds::FileUtils::find_file("plane_implicit.urdf", plane_file_name);    
-        tds::UrdfStructures<Algebra> plane_urdf_structures = parser.load_urdf(plane_file_name);
-        tds::UrdfToMultiBody<Algebra>::convert_to_multi_body(plane_urdf_structures, world, plane_mb,0);
-
-        char plane_search_path[TINY_MAX_EXE_PATH_LEN];
-        tds::FileUtils::extract_path(plane_file_name.c_str(), plane_search_path, TINY_MAX_EXE_PATH_LEN);
-        meshcat_viz.m_path_prefix = plane_search_path;
-
-        std::string texture_path = "checker_purple.png";
-        meshcat_viz.convert_visuals(plane_urdf_structures, texture_path,&plane_mb);
-    }
-
-    // render an object
-    {
-        tds::MultiBody<Algebra>& obj_mb = *world.create_multi_body();
-        obj_mb.set_floating_base(true);
-
-        tds::UrdfParser<Algebra> parser;
-        std::string obj_file_name;
-        tds::FileUtils::find_file("laikago/laikago_toes_zup.urdf", obj_file_name);
-        tds::UrdfStructures<Algebra> obj_urdf_structures = parser.load_urdf(obj_file_name);
-        tds::UrdfToMultiBody<Algebra>::convert_to_multi_body(obj_urdf_structures, world, obj_mb, 0);
-
-        char obj_search_path[TINY_MAX_EXE_PATH_LEN];
-        tds::FileUtils::extract_path(obj_file_name.c_str(), obj_search_path, TINY_MAX_EXE_PATH_LEN);
-        meshcat_viz.m_path_prefix = obj_search_path;
-
-        obj_mb.initialize();
-        std::string texture_path = "laikago_tex.jpg";
-        meshcat_viz.convert_visuals(obj_urdf_structures, texture_path, &obj_mb);
-
-        using Vector3 = typename Algebra::Vector3;
-        using Quaternion = typename Algebra::Quaternion;
-
-        double knee_angle = -0.5;
-        double abduction_angle = 0.2;
-        std::vector<double> initial_poses = {
-            0., 0., 0., 1., 0, 0, 0, 1.5,
-            abduction_angle, 0., knee_angle, abduction_angle, 0., knee_angle,
-            abduction_angle, 0., knee_angle, abduction_angle, 0., knee_angle,
-        };
-        for (int i = 0; i < 19; i++) {
-            obj_mb.q_[i] = initial_poses[i];
-        }
-        obj_mb.set_position(Vector3(1.5, -2.0, 0.5));
-        obj_mb.set_orientation(Quaternion(0.0, 0.0, 0.0, 1.0));
-    }
-
-    return meshcat_viz;
-}
-
-template<typename Algebra>
-void render(MeshcatUrdfVisualizer<Algebra>& meshcat_viz){
-    meshcat_viz.render();
-}
-
 
 
 int main(){
 
     auto sim = prepare<tds::EigenAlgebra>();
-
-    bool done = false;
+    // auto sim = prepare<MyAlgebra>();
     
     // initalize meshcat
-    auto meshcat_viz = init_visualize<tds::EigenAlgebra>();
+    // auto meshcat_viz = init_visualize<tds::EigenAlgebra>(sim);
+    // meshcat_viz.render();
 
+    sim.set_render_scene();
+
+
+    // typedef tds::GradientFunctional<tds::DIFF_CPPAD_CODEGEN_AUTO, LaikagoSimEnv> GradFunc;
+    // GradFunc::Compile();
+    // GradFunc diffsim;
+    // return 0;
+
+    bool done = false;
     while(!done){
 
         std::vector<double> params(10, 1.0);
+        
+        // sim
         sim(params);
 
 
-        // TODO: backward
-        // ..
+        // // diffsim
+        // diffsim.value(params);
+        // // TODO: backward
+        // diffsim.gradient(params);
 
-
-        render<tds::EigenAlgebra>(meshcat_viz);
+        sim.update_render();
     }
 
-
-    // {
-    //     typedef tds::GradientFunctional<tds::DIFF_CPPAD_CODEGEN_AUTO, Simulator> GradFunc;
-
-    //     GradFunc::Compile();
-    //     GradFunc diffsim;
-
-    //     // // initialize simulation env - 
-    //     // // auto world = prepare();
-
-    //     // std::vector<double> our_params(10, 1.0);
-
-    //     // // forward pass 
-    //     diffsim.value(params);
-
-    //     // // backward function - graident using cppad
-    //     // // cppad code ... 
-    //     diffsim.gradient(params);
-    // }
-
-
-    // modified codegen process - efficient ad code
-    //...
 
     return 0;
 }
