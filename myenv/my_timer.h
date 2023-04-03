@@ -37,7 +37,7 @@ public:
         end_time = std::chrono::high_resolution_clock::now();
         auto elapsed_ms = end_time - start_time;
         // end_time - start_time;
-        std::cout << "Elapsed time: "  << name << " " << std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed_ms).count() << "ns\n";
+        std::cout << "Elapsed time: "  << name << " " << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed_ms).count() << "ms\n";
     }
 };
 

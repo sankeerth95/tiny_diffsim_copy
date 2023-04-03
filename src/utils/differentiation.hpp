@@ -47,6 +47,7 @@ enum DiffMethod {
   DIFF_CPPAD_AUTO,
   DIFF_CPPAD_CODEGEN_AUTO,
   DIFF_CPPAD_CODEGEN_REV_AUTO,
+  DIFF_ENZYME,
 };
 
 /**
@@ -73,6 +74,8 @@ TINY_INLINE std::string diff_method_name(DiffMethod m) {
       return "CPPAD_CODEGEN_AUTO";
     case DIFF_CPPAD_CODEGEN_REV_AUTO:
       return "CPPAD_CODEGEN_REV_AUTO";
+    case DIFF_ENZYME:
+      return "DIFF_ENZYME";
     default:
       return "UNKNOWN";
   }
@@ -533,7 +536,7 @@ class GradientFunctional<DIFF_CPPAD_AUTO, F, ScalarAlgebra> {
     Init();
   }
 
-  Scalar value(const std::vector<Scalar> &x) const { return f_scalar_(x); }
+  Scalar value(const std::vector<Scalar> &x) { return f_scalar_(x); }
   const std::vector<Scalar> &gradient(const std::vector<Scalar> &x) const {
     gradient_ = tape_.Jacobian(x);
     return gradient_;
@@ -574,6 +577,59 @@ class GradientFunctional<DIFF_CPPAD_AUTO, F, ScalarAlgebra> {
 };
 #endif
 
+
+template <template <typename> typename F, typename ScalarAlgebra>
+class GradientFunctional<DIFF_ENZYME, F, ScalarAlgebra> {
+ public:
+  using Scalar = typename ScalarAlgebra::Scalar;
+  static const int kDim = F<ScalarAlgebra>::kDim;
+
+  GradientFunctional &operator=(const GradientFunctional &other) = delete;
+
+  template <typename... Args>
+  GradientFunctional(Args &&... args)
+      : f_scalar_(std::forward<Args>(args)...)
+      {
+    Init();
+  }
+
+  Scalar value(const std::vector<Scalar> &x) { 
+    return f_scalar_(x); 
+  }
+
+  const std::vector<Scalar> &gradient(const std::vector<Scalar> &x) const {
+    // TODO
+    return gradient_;
+  }
+
+  /**
+   * Traces the function with the provided input values (zeros if empty).
+   */
+  void Init(const std::vector<Scalar> &x_init = {}) {
+    int actual_dim = kDim > 0 ? kDim : static_cast<int>(x_init.size());
+    if (actual_dim == 0) {
+      std::cerr << "Warning: CppAD GradientFunctional could not be initialized "
+                   "because the parameter dimensionality is zero."
+                << std::endl;
+      return;
+    }
+  }
+
+ private:
+  F<ScalarAlgebra> f_scalar_;
+  mutable std::vector<Scalar> gradient_;
+};
+
+
+
+
+
+
+
+
+
+
+
 namespace {
 // make sure every model has its own ID
 static inline int cpp_ad_codegen_model_counter = 0;
@@ -582,7 +638,7 @@ static inline int cpp_ad_codegen_model_counter = 0;
 struct CodeGenSettings {
   bool verbose{true};
   bool use_clang{true};
-  int optimization_level{0};
+  int optimization_level{3};
   std::size_t max_assignments_per_func{5000};
   std::size_t max_operations_per_assignment{150};
   std::string sources_folder{"cppadcg_src"};
@@ -835,8 +891,6 @@ class GradientFunctional<DIFF_CPPAD_CODEGEN_AUTO, F, ScalarAlgebra> {
 
   Scalar value(const std::vector<Scalar> &x) const {
     const auto fx = model_->ForwardZero(x);
-    // const auto fx = model_->ReverseOne(x);
-
 #ifndef NDEBUG
     // const auto fx_slow = f_scalar_(x);
     // const bool close = std::fabs(fx_slow - fx[0]) < 1e-6;
