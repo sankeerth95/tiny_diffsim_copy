@@ -156,6 +156,12 @@ struct LaikagoSimEnv{
     }
 };
 
+void wrapper(std::vector<double>& v, LaikagoSimEnv<tds::EigenAlgebra>& sim) {
+    sim(v);
+}
+
+extern void __enzyme_autodiff(void*, std::vector<double>&, LaikagoSimEnv<tds::EigenAlgebra>&);
+
 
 int main(){
 
@@ -175,8 +181,9 @@ int main(){
         sim(v);
         sim.update_render();
 
-        diffsim.value(v);
-        diffsim.gradient(v);
+        // diffsim.value(v);
+        // diffsim.gradient(v);
+        __enzyme_autodiff((void *) wrapper, v, sim);
 
     }
     return 0;
